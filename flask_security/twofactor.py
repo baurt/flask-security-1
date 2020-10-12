@@ -8,15 +8,17 @@
     :copyright: (c) 2019-2020 by J. Christopher Wagner (jwag).
 """
 
-from flask import current_app as app, redirect, request, session
+from flask import current_app as app, redirect, request, session, after_this_request
 from werkzeug.datastructures import MultiDict
 from werkzeug.local import LocalProxy
 
 from .utils import (
     SmsSenderFactory,
     base_render_json,
+    check_and_get_token_status,
     config_value,
     do_flash,
+    get_within_delta,
     login_user,
     json_error_response,
     send_mail,
@@ -97,7 +99,7 @@ def complete_two_factor_process(
     user, primary_method, totp_secret, is_changing, remember_login=None
 ):
     """clean session according to process (login or changing two-factor method)
-     and perform action accordingly
+    and perform action accordingly
     """
 
     _datastore.tf_set(user, primary_method, totp_secret=totp_secret)
@@ -132,7 +134,7 @@ def is_tf_setup(user):
 
 
 def tf_login(user, remember=None, primary_authn_via=None):
-    """ Helper for two-factor authentication login
+    """Helper for two-factor authentication login
 
     This is called only when login/password have already been validated.
     This can be from login, register, confirm, unified sign in, unified magic link.
@@ -189,3 +191,61 @@ def tf_login(user, remember=None, primary_authn_via=None):
     form.user = user
 
     return base_render_json(form, include_user=False, additional=json_response)
+
+
+def generate_tf_validity_token(tf_user_id):
+    """Generates a unique token for the specified user.
+
+    :param user: The user the token belongs to
+    """
+    return _security.tf_validity_serializer.dumps(tf_user_id)
+
+
+def tf_validity_token_status(token):
+    """Returns the expired status, invalid status, and user of a
+    Two-Factor Validity token.
+    For example::
+
+        expired, invalid, user = tf_validity_token_status('...')
+
+    :param token: The Two-Factor Validity token
+    """
+    return check_and_get_token_status(
+        token, "tf_validity", get_within_delta("TWO_FACTOR_LOGIN_VALIDITY")
+    )
+
+
+def tf_verify_validility_token(token, form_user_uniquifier):
+    """Returns the status of the Two-Factor Validity token
+
+    :param token: The Two-Factor Validity token
+    :param form_user_uniquifier: The ``fs_uniquifier`` of the submitting user.
+    """
+    if token is None:
+        return False
+
+    expired, invalid, uniquifier = tf_validity_token_status(token)
+
+    if expired or invalid or (form_user_uniquifier != uniquifier):
+
+        return False
+
+    return True
+
+
+def tf_set_validity_token_cookie(response, tf_user_id=None, remember=False):
+    """Sets the Two-Factor validity token for a specific user given that is
+    configured and the user selects remember me
+
+    :param response: The response with which to set the set_cookie
+    :param tf_user_id: The ``fs_uniquifier`` of a user that has succcessfully
+                        authenticated and validated with Two-Factor
+                        authentication.
+    :param remember: Flag specifying if the tf_validity cookie should be set.
+    """
+    if not config_value("TWO_FACTOR_ALWAYS_VALIDATE") and remember:
+        token = generate_tf_validity_token(tf_user_id)
+        max_age = int(get_within_delta("TWO_FACTOR_LOGIN_VALIDITY").total_seconds())
+        response.set_cookie("tf_validity", token, max_age=max_age)
+
+    return response

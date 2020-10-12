@@ -182,6 +182,9 @@ _default_config = {
     "TWO_FACTOR_AUTHENTICATOR_VALIDITY": 120,
     "TWO_FACTOR_MAIL_VALIDITY": 300,
     "TWO_FACTOR_SMS_VALIDITY": 120,
+    "TWO_FACTOR_ALWAYS_VALIDATE": True,
+    "TWO_FACTOR_LOGIN_VALIDITY": "30 days",
+    "TWO_FACTOR_VALIDITY_SALT": "tf-validity-salt",
     "CONFIRM_EMAIL_WITHIN": "5 days",
     "RESET_PASSWORD_WITHIN": "5 days",
     "LOGIN_WITHOUT_CONFIRMATION": False,
@@ -425,7 +428,7 @@ _default_forms = {
 
 
 def _user_loader(user_id):
-    """ Try to load based on fs_uniquifier (alternative_id) if available.
+    """Try to load based on fs_uniquifier (alternative_id) if available.
 
     Note that we don't try, and fall back to the other - primarily because some DBs
     and drivers (psycopg2) really really hate getting mismatched types during queries.
@@ -572,6 +575,7 @@ def _get_state(app, datastore, anonymous_user=None, **kwargs):
             reset_serializer=_get_serializer(app, "reset"),
             confirm_serializer=_get_serializer(app, "confirm"),
             us_setup_serializer=_get_serializer(app, "us_setup"),
+            tf_validity_serializer=_get_serializer(app, "two_factor_validity"),
             _context_processors={},
             _unauthorized_callback=None,
             _render_json=default_render_json,
@@ -773,7 +777,7 @@ class UserMixin(BaseUserMixin):
         return verify_and_update_password(password, self)
 
     def calc_username(self):
-        """ Come up with the best 'username' based on how the app
+        """Come up with the best 'username' based on how the app
         is configured (via :py:data:`SECURITY_USER_IDENTITY_ATTRIBUTES`).
         Returns the first non-null match (and converts to string).
         In theory this should NEVER be the empty string unless the user
@@ -789,7 +793,7 @@ class UserMixin(BaseUserMixin):
         return str(cusername) if cusername is not None else ""
 
     def us_send_security_token(self, method, **kwargs):
-        """ Generate and send the security code for unified sign in.
+        """Generate and send the security code for unified sign in.
 
         :param method: The method in which the code will be sent
         :param kwargs: Opaque parameters that are subject to change at any time
@@ -807,7 +811,7 @@ class UserMixin(BaseUserMixin):
         return None
 
     def tf_send_security_token(self, method, **kwargs):
-        """ Generate and send the security code for two-factor.
+        """Generate and send the security code for two-factor.
 
         :param method: The method in which the code will be sent
         :param kwargs: Opaque parameters that are subject to change at any time
@@ -1226,7 +1230,7 @@ class Security:
         return render_template(*args, **kwargs)
 
     def render_json(self, cb):
-        """ Callback to render response payload as JSON.
+        """Callback to render response payload as JSON.
 
         :param cb: Callback function with
          signature (payload, code, headers=None, user=None)
@@ -1260,7 +1264,7 @@ class Security:
         self._state._render_json = cb
 
     def want_json(self, fn):
-        """ Function that returns True if response should be JSON (based on the request)
+        """Function that returns True if response should be JSON (based on the request)
 
         :param fn: Function with the following signature (request)
 
